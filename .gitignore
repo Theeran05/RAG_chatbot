@@ -1,0 +1,14 @@
+# Virtual Environment
+.myenv/
+venv/
+ENV/
+
+# Environment Variables
+.env
+
+# Vector Database
+vector_db/
+
+# Python cache
+__pycache__/
+*.pyc
