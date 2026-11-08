@@ -2,9 +2,10 @@
 
 # 📄 HR Policy RAG Assistant
 
-**Ask questions about a PDF in plain English and get answers grounded in the document, right in your terminal.**
+**A REST API that answers questions about a PDF, grounded in the document's own content.**
 
 ![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![Pinecone](https://img.shields.io/badge/Vector%20DB-Pinecone-000000)
 ![OpenRouter](https://img.shields.io/badge/LLM-OpenRouter-6566F1)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -20,7 +21,8 @@
 - [How It Works](#-how-it-works)
 - [Project Structure](#-project-structure)
 - [Getting Started](#-getting-started)
-- [Usage](#-usage)
+- [Running the API](#-running-the-api)
+- [API Reference](#-api-reference)
 - [Configuration](#-configuration)
 - [Module Reference](#-module-reference)
 - [Troubleshooting](#-troubleshooting)
@@ -34,7 +36,7 @@
 This project is a small, readable **Retrieval-Augmented Generation (RAG)** pipeline.
 It reads a PDF (an HR policy by default), splits it into overlapping chunks, turns each chunk into an embedding, and stores them in **Pinecone**.
 
-When you ask a question, the app embeds your question, retrieves the most relevant chunks from Pinecone, and sends them to an LLM through **OpenRouter**. The LLM answers **only from the retrieved context**. If the document doesn't contain the answer, it says so instead of guessing.
+The whole pipeline is served as a **FastAPI** REST API. When you send a question to `POST /api/v1/ask`, the API embeds your question, retrieves the most relevant chunks from Pinecone, and sends them to an LLM through **OpenRouter**. The LLM answers **only from the retrieved context**. If the document doesn't contain the answer, it says so instead of guessing.
 
 > **Example:** *"If my performance is bad, how many days is the probation period?"*
 > The assistant finds the probation section of the HR policy and answers from it.
@@ -48,8 +50,9 @@ When you ask a question, the app embeds your question, retrieves the most releva
 - 🧠 **Free embeddings and LLM:** uses free models on OpenRouter.
 - ⚡ **Fast semantic search:** Pinecone returns the top-k most similar chunks.
 - 🛡️ **Grounded answers:** the system prompt stops the model from answering beyond the context.
-- 💬 **Interactive terminal chat:** run once, then keep asking questions until you type `exit`.
-- ♻️ **Smart ingestion:** skips re-ingesting when the index already has data, unless you pass `--ingest`.
+- 🌐 **REST API with FastAPI:** typed request and response models, validation, and clear error codes.
+- 📖 **Interactive docs:** Swagger UI at `/docs` and ReDoc at `/redoc`, generated automatically.
+- ♻️ **Smart ingestion:** ingests the PDF on startup only when the index is empty; re-ingest any time with `POST /api/v1/ingest`.
 
 ---
 
@@ -65,11 +68,11 @@ flowchart LR
     end
 
     subgraph Query["💬 Query (every question)"]
-        Q[User question] --> QE[embedder.py<br/>embed query]
+        Q[POST /api/v1/ask] --> QE[embedder.py<br/>embed query]
         QE --> S[vectorstore.py<br/>top-k search]
         E -.-> S
         S --> L[llm.py<br/>answer from context]
-        L --> R[Answer in terminal]
+        L --> R[JSON response]
     end
 ```
 
@@ -88,7 +91,7 @@ flowchart LR
 
 ```text
 .
-├── main.py              # Entry point: optional ingestion + interactive Q&A loop
+├── main.py              # FastAPI app: routes, request/response models, startup ingestion
 ├── pdfreader.py         # Reads the PDF and returns a list of page texts
 ├── chunker.py           # Splits text into overlapping chunks
 ├── embedder.py          # Embeds chunks and queries through OpenRouter
@@ -139,6 +142,8 @@ pip install -r requirements.txt
 `requirements.txt`:
 
 ```text
+fastapi
+uvicorn[standard]
 openai
 pinecone
 pypdf
@@ -166,45 +171,145 @@ Create an index in the Pinecone console with:
 
 ---
 
-## 💬 Usage
+## ▶️ Running the API
 
-Put your PDF at `resources/HR_Policy_RAG_Demo.pdf`, or change `PDF_PATH` in `main.py`. Then run:
-
-```bash
-python main.py
-```
-
-On the first run the index is empty, so the app ingests the PDF automatically. After that it goes straight to the chat.
-
-To rebuild the index, for example after you change the PDF:
+Put your PDF at `resources/HR_Policy_RAG_Demo.pdf`, or change `PDF_PATH` in `main.py`. Then start the server:
 
 ```bash
-python main.py --ingest
+uvicorn main:app --reload
 ```
 
-### Example session
+You can also run `python main.py`. The API is served at **http://127.0.0.1:8000**.
 
-```text
-$ python main.py
-Index already has data, skipping ingestion (use --ingest to rebuild).
+On startup, if the Pinecone index is empty, the default PDF is ingested automatically. After that, startup is instant.
 
-Ask me anything about the HR policy. Type 'exit' to quit.
+| URL | Description |
+|-----|-------------|
+| http://127.0.0.1:8000/docs | Swagger UI, where you can try every endpoint in the browser |
+| http://127.0.0.1:8000/redoc | ReDoc API documentation |
 
-You: If my performance is bad, how many days is the probation period?
-Found 4 matches for the query.
+---
 
-Assistant: According to the policy, the probation period can be extended ...
+## 📡 API Reference
 
-You: How many casual leaves do I get per year?
-Found 4 matches for the query.
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Service health and number of stored vectors |
+| `POST` | `/api/v1/ask` | Ask a question and get an answer |
+| `POST` | `/api/v1/ingest` | Ingest (or re-ingest) a PDF into Pinecone |
 
-Assistant: ...
+### `POST /api/v1/ask`
 
-You: exit
-Goodbye!
+Ask a question about the document.
+
+**Request body**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `question` | string | ✅ | | The question to ask |
+| `top_k` | integer (1–20) | | `4` | Number of chunks to retrieve |
+| `include_sources` | boolean | | `false` | Also return the retrieved chunks |
+
+```json
+{
+  "question": "If my performance is bad, how many days is the probation period?",
+  "top_k": 4,
+  "include_sources": true
+}
 ```
 
-Type `exit`, `quit`, `q` or `bye`, or press **Ctrl+C**, to leave.
+**Response** `200 OK`
+
+```json
+{
+  "question": "If my performance is bad, how many days is the probation period?",
+  "answer": "According to the policy, the probation period can be extended ...",
+  "sources": [
+    "Probation Period: All new employees ...",
+    "..."
+  ]
+}
+```
+
+`sources` is `null` unless `include_sources` is `true`.
+
+**cURL**
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "How many casual leaves do I get per year?"}'
+```
+
+**Python**
+
+```python
+import requests
+
+res = requests.post(
+    "http://127.0.0.1:8000/api/v1/ask",
+    json={"question": "How many casual leaves do I get per year?"},
+)
+print(res.json()["answer"])
+```
+
+### `POST /api/v1/ingest`
+
+Reads a PDF, chunks it, embeds it and stores it in Pinecone. Every field is optional, so an empty body ingests the default PDF.
+
+**Request body**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `pdf_path` | string | `./resources/HR_Policy_RAG_Demo.pdf` | Path to the PDF on the server |
+| `chunk_size` | integer | `900` | Characters per chunk |
+| `chunk_overlap` | integer | `150` | Overlap between chunks; must be smaller than `chunk_size` |
+
+```json
+{
+  "pdf_path": "./resources/HR_Policy_RAG_Demo.pdf",
+  "chunk_size": 900,
+  "chunk_overlap": 150
+}
+```
+
+**Response** `200 OK`
+
+```json
+{
+  "message": "Ingestion complete",
+  "pdf_path": "./resources/HR_Policy_RAG_Demo.pdf",
+  "chunks_stored": 42
+}
+```
+
+### `GET /health`
+
+**Response** `200 OK`
+
+```json
+{
+  "status": "ok",
+  "vector_count": 42
+}
+```
+
+### Error responses
+
+Errors follow FastAPI's standard shape:
+
+```json
+{ "detail": "Failed to generate answer: ..." }
+```
+
+| Status | When |
+|--------|------|
+| `404` | The PDF file for ingestion was not found |
+| `422` | Invalid request body, such as an empty `question` or `chunk_overlap >= chunk_size` |
+| `502` | An upstream call to OpenRouter or Pinecone failed |
+| `503` | Pinecone is unreachable (from `/health`) |
+
+> 🔒 `/api/v1/ingest` reads files from the server's disk and has no authentication. Keep it private, or protect it before you deploy the API publicly.
 
 ---
 
@@ -213,9 +318,9 @@ Type `exit`, `quit`, `q` or `bye`, or press **Ctrl+C**, to leave.
 | Setting | Location | Default | Description |
 |---------|----------|---------|-------------|
 | `PDF_PATH` | `main.py` | `./resources/HR_Policy_RAG_Demo.pdf` | Document to ingest |
-| `chunk_size` | `main.py` → `chunk_pages()` | `900` | Characters per chunk |
-| `chunk_overlap` | `main.py` → `chunk_pages()` | `150` | Characters shared between neighbouring chunks |
-| `top_k` | `main.py` → `search_in_pinecone()` | `4` | Number of chunks sent to the LLM |
+| `chunk_size` | `/api/v1/ingest` body | `900` | Characters per chunk |
+| `chunk_overlap` | `/api/v1/ingest` body | `150` | Characters shared between neighbouring chunks |
+| `top_k` | `/api/v1/ask` body | `4` | Number of chunks sent to the LLM |
 | `NAMESPACE` | `main.py` | `""` | Pinecone namespace |
 | `EMBEDDING_MODEL` | `embedder.py` | `liquid/lfm-2.5-embedding-350m:free` | Embedding model on OpenRouter |
 | `LLM_MODEL` | `llm.py` | `openrouter/free` | Chat model; `openrouter/free` picks an available free model |
@@ -266,7 +371,9 @@ Joins the retrieved chunks into one context block and asks the LLM to answer str
 | `401` / authentication error | A key in `.env` is missing or wrong. |
 | `429` / rate limit | Free models are rate limited. Wait a moment and try again. |
 | "Cannot answer based on the given context" | The PDF doesn't cover the question, or a larger `top_k` is needed. |
-| Old answers after you change the PDF | Run `python main.py --ingest`. Clear the namespace first if the new PDF is shorter. |
+| Old answers after you change the PDF | Call `POST /api/v1/ingest`. Clear the namespace first if the new PDF is shorter. |
+| `Address already in use` | Port 8000 is taken. Run `uvicorn main:app --port 8001`. |
+| Slow first startup | The index was empty, so the PDF is being ingested. Later starts are fast. |
 
 ---
 
@@ -274,9 +381,12 @@ Joins the retrieved chunks into one context block and asks the LLM to answer str
 
 - [ ] Batch embedding requests for faster ingestion
 - [ ] Support multiple PDFs with source citations (file and page)
-- [ ] Stream LLM responses token by token
+- [ ] Stream LLM responses token by token (Server-Sent Events)
+- [ ] API key authentication and rate limiting
+- [ ] PDF upload endpoint (`multipart/form-data`)
+- [ ] Docker image for deployment
 - [ ] Keep conversation history for follow-up questions
-- [ ] Web UI with Streamlit or Gradio
+- [ ] Web front end that calls the API
 
 ---
 
@@ -285,5 +395,5 @@ Joins the retrieved chunks into one context block and asks the LLM to answer str
 This project is released under the [MIT License](LICENSE).
 
 <div align="center">
-<sub>Built with Python, Pinecone and OpenRouter.</sub>
+<sub>Built with Python, FastAPI, Pinecone and OpenRouter.</sub>
 </div>
