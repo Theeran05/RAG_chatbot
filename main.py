@@ -3,7 +3,10 @@
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
+import os
+
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from pdfreader import read_pdf
@@ -82,6 +85,19 @@ app = FastAPI(
     description="Ask questions about a PDF and get answers grounded in its content.",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+# Let the browser frontend call this API from another origin.
+# ALLOWED_ORIGINS is a comma-separated list, e.g.
+#   ALLOWED_ORIGINS=http://localhost:5500,https://your-frontend.vercel.app
+# Defaults to "*" (any origin), which is fine because the API uses no cookies.
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
 )
 
 
