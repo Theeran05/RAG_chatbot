@@ -5,7 +5,10 @@ from typing import List, Optional
 
 import os
 
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -144,6 +147,39 @@ def ingest(req: IngestRequest = IngestRequest()):
         raise HTTPException(status_code=502, detail=f"Ingestion failed: {e}")
 
     return IngestResponse(message="Ingestion complete", pdf_path=req.pdf_path, chunks_stored=count)
+
+
+# ---------- Frontend (chat UI served by this same app) ----------
+# Only these files are served. Never mount the whole project folder as static
+# files, or anyone could download .env (your API keys) and the source code.
+BASE_DIR = Path(__file__).resolve().parent
+FRONTEND_FILES = {
+    "index.html": "text/html",
+    "style.css": "text/css",
+    "styles.css": "text/css",
+    "app.js": "text/javascript",
+    "HR_logo.png": "image/png",
+}
+
+
+@app.get("/", include_in_schema=False)
+def serve_index():
+    return FileResponse(BASE_DIR / "index.html", media_type="text/html")
+
+
+@app.get("/config.js", include_in_schema=False)
+def serve_config():
+    # The page and the API share one origin, so the browser can use relative URLs.
+    # No .env or build step is needed for this config.
+    return Response("window.APP_CONFIG = { SAME_ORIGIN: true };\n", media_type="text/javascript")
+
+
+@app.get("/{filename}", include_in_schema=False)
+def serve_frontend_file(filename: str):
+    path = BASE_DIR / filename
+    if filename not in FRONTEND_FILES or not path.is_file():
+        raise HTTPException(status_code=404, detail="Not Found")
+    return FileResponse(path, media_type=FRONTEND_FILES[filename])
 
 
 if __name__ == "__main__":
